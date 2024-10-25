@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+-- Ensure the pgvector extension is enabled.
+CREATE EXTENSION IF NOT EXISTS vector;
 
-## Getting Started
+-- Create the emails table.
+CREATE TABLE emails (
+id SERIAL PRIMARY KEY, -- Unique ID for each email
+subject TEXT NOT NULL, -- Subject of the email
+sender TEXT NOT NULL, -- Email address of the sender
+recipient TEXT[] NOT NULL, -- Array of recipients
+cc TEXT[], -- Optional CC recipients
+bcc TEXT[], -- Optional BCC recipients
+body TEXT NOT NULL, -- Full body of the email (raw content)
+created_at TIMESTAMPTZ DEFAULT NOW() -- Timestamp when the email was sent or received
+);
 
-First, run the development server:
+-- Create the email_sections table.
+CREATE TABLE email_sections (
+id SERIAL PRIMARY KEY, -- Unique ID for each section
+email_id INT NOT NULL REFERENCES emails(id) ON DELETE CASCADE, -- Reference to parent email
+section_content TEXT NOT NULL, -- Content of the section (chunk)
+embedding VECTOR(1024), -- Embedding of the section
+section_order INT, -- Order of the section in the original email
+created_at TIMESTAMPTZ DEFAULT NOW() -- Timestamp for the section
+);
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+-- Create an HNSW index on the section embeddings using the correct operator class.
+CREATE INDEX section_embedding_hnsw_idx
+ON email_sections USING hnsw (embedding vector_cosine_ops);
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+-- Function: match_filtered_email_sections
+-- Description: This function retrieves relevant email sections based on a similarity search
+-- using a vector embedding and allows filtering by the sender or recipient email address.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+create or replace function match_filtered_email_sections(
+query_embedding vector(1536), -- Input: The embedding vector generated from the user's question (1536 dimensions for ADA-002).
+match_threshold float, -- Input: Minimum similarity threshold (only sections with similarity above this will be returned).
+match_count int, -- Input: Maximum number of results to return.
+email_address text -- Input: The email address used to filter by sender or recipient.
+)
+returns table (
+id int, -- Output: Unique ID of the email section.
+email_id int, -- Output: ID of the parent email (used to reference the full email).
+section_content text, -- Output: The content of the matching email section (a chunk of the email).
+similarity float -- Output: Similarity score between the query embedding and the section embedding.
+)
+language sql
+as $$
+-- Core SQL query to perform the similarity search and filter results.
+select
+es.id, -- Select the ID of the email section.
+es.email_id, -- Select the ID of the parent email to which this section belongs.
+es.section_content, -- Select the content of the section (chunk of the email).
+1 - (es.embedding <-> query_embedding) as similarity -- Calculate similarity score: 1 minus the cosine distance.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+from
+email_sections es -- From the email sections table (contains all the email chunks with their embeddings).
+join
+emails e on es.email_id = e.id -- Join with the emails table to access sender and recipient information.
 
-## Learn More
+where
+-- Filter by sender or recipient: Only retrieve sections where the sender or recipient matches the given email address.
+(e.sender = email_address or e.recipient @> array[email_address])
 
-To learn more about Next.js, take a look at the following resources:
+    -- Apply the similarity threshold: Only return sections with a similarity score greater than the threshold.
+    and (1 - (es.embedding <-> query_embedding)) > match_threshold
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+order by
+similarity desc -- Order the results by similarity in descending order (most similar first).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+limit
+least(match_count, 200); -- Limit the number of results to the smaller of match_count or 200 to prevent large queries.
 
-## Deploy on Vercel
+$$
+;
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+SELECT *
+FROM pg_proc
+WHERE proname = 'match_filtered_email_sections';
+
+
+SELECT nspname AS schema_name, proname AS function_name
+FROM pg_proc p
+JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE proname = 'match_filtered_email_sections';
+$$
