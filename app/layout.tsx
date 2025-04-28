@@ -38,8 +38,11 @@ export default function RootLayout({
             <nav className="w-full flex justify-center border-b border-b-foreground/10 h-16">
               <div className="w-full max-w-5xl flex justify-between items-center p-3 px-5 text-sm">
                 {/* Logo with Link to Home */}
-                <div className="flex gap-5 items-center font-semibold">
-                  <Link href="/">
+                <Link
+                  href="/"
+                  className="flex gap-5 items-center font-semibold"
+                >
+                  <div className="flex gap-5 items-center font-semibold">
                     <Image
                       src={logo}
                       alt="MailBrain Logo"
@@ -47,9 +50,9 @@ export default function RootLayout({
                       height={40}
                       className="rounded-full cursor-pointer"
                     />
-                  </Link>
-                  <span className="text-xl font-bold">MailBrain</span>
-                </div>
+                    <span className="text-xl font-bold">MailBrain</span>
+                  </div>
+                </Link>{" "}
               </div>
             </nav>
 

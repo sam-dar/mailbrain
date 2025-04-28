@@ -47,6 +47,9 @@ const SendEmailPage = () => {
 
       if (response.ok) {
         alert("Email data submitted successfully!");
+        setTimeout(() => {
+          window.location.href = "/";
+        }, 1000); // 1000ms = 1 second delay before redirecting
       } else {
         console.error("Failed to submit email data. Response:", response);
         alert("Failed to submit email data.");
